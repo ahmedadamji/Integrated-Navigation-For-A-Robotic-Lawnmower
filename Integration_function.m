@@ -1,0 +1,217 @@
+%Integration_function
+function Integration_result = Integration_function(GNSS_computation,DR_computation)
+
+%% This function was created on 08/02/2022 by Ikedinaekpere Kennedy Dike, Ahmed Adamjee,
+%% and Abdulbaasit Sanusi
+
+%% The aim of this function is to develop an integrated horizontal-only DR/GNSS navigation
+% solution using Kalman filtering
+% This scripts focus more on getting an accurate estimate of position and velocity by
+% combining the computation from gnss measurement and the measurement
+% obtained from other sensor, correcting this to obtain a more robust and accurate solution
+%
+% Inputs:
+%   GNSS_computation    continuous GNSS navigation solution
+%     columns 1            Time (s)
+%     columns 2            GNSS estimated user latitude (degree)
+%     columns 3            GNSS estimated user longitude (degree)
+%     columns 4            GNSS estimated user height (m)
+%     columns 5-6          GNSS estimated user velocity (m/s)
+%     columns 7            GNSS estimated user heading (degree)
+%
+%   DR_computation      continuous Multisensor navigation solution
+%     columns 1            Time (s)
+%     columns 2            Multisensor estimated user latitude (degree)
+%     columns 3            Multisensor estimated user longitude (degree)
+%     columns 4-5          Multisensor estimated user damped velocity (m/s)
+%     columns 6            Multisensor estimated user heading (degree)
+%
+% Outputs:
+%   Integration_result   GNSS and Multisensor integrated horizontal-only 
+%                           DR/GNSS navigation solution
+%     columns 1            Time (s)
+%     columns 2            Estimated user latitude (degree)
+%     columns 3            Estimated user longitude (degree)
+%     columns 4            Estimated user north velocity (m/s)
+%     columns 5            Estimated user east velocity (m/s)
+%
+%% Begins
+
+
+%% Calling this script defines all the constants required for this Application.
+Define_Constants_Master;
+
+%% List to store latitude solution from each epoch
+latitude_list = [];
+
+% List to store north velocity solution from each epoch
+north_velocity_list = [];
+
+% List to store East velocity solution from each epoch
+east_velocity_list = [];
+
+% List to store longitude solution from each epoch
+longitude_list = [];
+
+
+%% %% Using the DR measurement obtained from the Multisensor_EKF.m file
+
+DR_latitude_reading = DR_computation(:,2) * deg_to_rad;
+DR_longitude_reading = DR_computation(:,3) * deg_to_rad;
+DR_velocity = DR_computation(:,4:5);
+
+
+
+%% Using the corrected GNSS measurement obtained from the GNSS_EKF.m file
+
+% latitude, longitude, height and velocity reading from obtained from the gnss computation
+% latitude and longitude are converted to radians for further calculation
+
+gnss_latitude_reading = GNSS_computation(:,2) * deg_to_rad;
+gnss_longitude_reading = GNSS_computation(:,3) * deg_to_rad;
+gnss_height_reading = GNSS_computation(:,4);
+velocity = GNSS_computation(:,5:6);
+
+%% Initialising state estimate vector (initial Dead Reckoning errors)
+
+x = zeros(4,1);
+
+%%%%%%%%%%%%%%%%%% computing the corrected DR solution for the 1st epoch %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+% The initial geodetic latitude and longitude (at time 0) are
+% used from the respective corresponding GNSS solution
+
+L_k_minus = gnss_latitude_reading(1);
+lamda_k_minus =gnss_longitude_reading(1);
+V_n_minus =  velocity(1,1);
+V_e_minus = velocity(1,2);
+
+%Using the Radii_of_curvature function to calculate the meridian and transverse radii of
+%curvature by passing the latitude at time 0
+
+[R_N,R_E]= Radii_of_curvature(L_k_minus);
+
+%% Initalizing the the initial position and velocity uncertainty need to compute the initial error
+% covariance matrix
+
+initial_velocity_uncertainty= 0.1^2;   %  sigma_v check if it has been defined in the define constant master %%%%%%%%%%%%%%%%%%%%%
+initial_position_uncertainty = 10^2;  % sigma_r check if it has been defined in the define constant master %%%%%%%%%%%%%%
+
+% Initialising Error Covariance Matrix for the gyroscope readings
+% to update using an extended Kalman Filter
+
+P = [initial_velocity_uncertainty 0 0 0;...
+    0 initial_velocity_uncertainty 0 0;...
+    0 0 initial_position_uncertainty/(R_N + gnss_height_reading(1))^2 0;...
+    0 0  0 initial_position_uncertainty/((R_N + gnss_height_reading(1))^2 * (cos(L_k_minus))^2)];
+
+%% tau is the propagation delay
+tau = 0.5;
+
+
+%% Dead Reckoning velocity error power spectral density (PSD), S_DR
+
+S_DR = 0.2; % confirm if it is the same as psd in the define constant master under gyroscope characteristics... the values are different though
+
+% GNSS position and velocity measurement standard deviation
+
+sigma_gr = 5^2; sigma_grv = 0.02^2;  % confirm if this is the same as noise_std_on_pseudo_range and noise_std_on_pseudo_rangerates in define constant master
+
+
+%% Storing solutions found in epoch 1  to a list
+
+latitude_list = [latitude_list;L_k_minus * rad_to_deg];
+longitude_list = [longitude_list;lamda_k_minus * rad_to_deg];
+north_velocity_list = [north_velocity_list;V_n_minus];
+east_velocity_list = [east_velocity_list;V_e_minus];
+
+
+%%%%%%%%%%%%%%%%%% computing the corrected DR solution for other epochs %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+for k = 2:length(time)
+
+    %% Computing the transition matrix %%
+    transition_matrix = [1 0 0 0;0 1 0 0;...
+        tau/(R_N + gnss_height_reading(k-1)) 0 1 0;...
+        0 tau/((R_E + gnss_height_reading(k-1))*cos(L_k_minus)) 0 1];
+
+    %% Computing the system noise covariance matrix
+    Q_k_1 = [S_DR*tau, 0, 0.5*(S_DR*(tau^2))/(R_N + gnss_height_reading(k-1)), 0;...
+        0, (S_DR*tau), 0, 0.5*(S_DR*(tau^2))/((R_E + gnss_height_reading(k-1))*(cos(L_k_minus)));...
+        0.5*(S_DR*(tau^2))/(R_N + gnss_height_reading(k-1)), 0, (1/3)*((S_DR*(tau^3))/((R_N + gnss_height_reading(k-1))^2)), 0;...
+        0 0.5*(S_DR*(tau^2))/((R_E + gnss_height_reading(k-1))*(cos(L_k_minus))) 0 (1/3)*(S_DR*(tau^3))/(((R_E + gnss_height_reading(k-1))^(2))*(cos(L_k_minus)^2))];
+
+
+    %%  Using the transition matrix to propagate the state estimates
+    x = transition_matrix * x;
+
+    %%    propagating the error covariance matrix
+    P = (transition_matrix*P*transition_matrix') + Q_k_1;
+
+    %% Computing the measurement matrix (H) %%
+    H = [0 0 -1 0;0 0 0 -1;-1 0 0 0;0 -1 0 0];
+
+    %% Computing the measurement noise covariance matrix
+    R_k = [sigma_gr/(R_N+gnss_height_reading(k))^2 0 0 0;...
+        0 sigma_gr/((R_E+gnss_height_reading(k))^(2) * (cos(L_k_minus)^2)) 0 0;...
+        0 0 sigma_grv 0;...
+        0 0 0 sigma_grv];
+
+    %% Computing the Kalman gain matrix
+    K_k = (P* H') /((H*P*H')+R_k);
+
+
+    %% calculating the measurement innovation vector
+
+    delta_z = [gnss_latitude_reading(k) - DR_latitude_reading(k);...
+        gnss_longitude_reading(k) - DR_longitude_reading(k);...
+        velocity(k,1) - DR_velocity(k,1);...
+        velocity(k,2) - DR_velocity(k,2)] - (H*x);
+
+
+    %% Updating the state estimates %%
+    x = x + (K_k*delta_z);
+
+    %% Updating the error covariance matrix %%
+    P = (eye(4) - (K_k*H))*P;
+
+
+    %% Using the Kalman filter estimates to correct the DR solution at each epoch
+
+    L_corrected = (DR_latitude_reading(k)-x(3));
+    lamda_corrected = (DR_longitude_reading(k)-x(4));
+    V_n_corrected = (DR_velocity(k,1) - x(1));
+    V_e_corrected = (DR_velocity(k,2)-x(2));
+
+    %% Storing solutions found in each epoch to a list
+    latitude_list = [latitude_list;L_corrected * rad_to_deg];
+    longitude_list = [longitude_list;lamda_corrected * rad_to_deg];
+    north_velocity_list = [north_velocity_list;V_n_corrected];
+    east_velocity_list = [east_velocity_list;V_e_corrected];
+
+    %% updating the latitud, longitude and velocity for the next epoch
+    L_k_minus = gnss_latitude_reading(k);
+
+end
+
+%% Storing all results from the IntegratedDR/GNSS navigation solution
+%  using Extended Kalman Filter in a matrix called result3
+Integration_result = [time latitude_list longitude_list north_velocity_list east_velocity_list];
+
+
+% figure
+%
+% plot(time,longitude_list)
+% title('A plot of the longitude of the lawnmower with respect to time')
+%
+% figure
+%
+% plot(time,north_velocity_list)
+% title('A plot of the velcoity in the east direction of the lawnmower with respect to time')
+% figure
+%
+% plot(time,east_velocity_list)
+% title('A plot of the velcoity in the north direction of the lawnmower with respect to time')
+
+%%
+end

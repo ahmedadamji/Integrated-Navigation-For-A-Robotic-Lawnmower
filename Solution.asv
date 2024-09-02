@@ -1,0 +1,59 @@
+%Solution
+
+%% This script was written by Ikedinaekpere Kennedy Dike, Ahmed Adamjee,
+%% and Abdulbaasit Sanusi
+
+% This script calls all scripts that are required to fusing data from all 
+% sensors to obtain an optimal position, velocity and heading solution.
+
+% The following commands are used to clear the Command Window and
+% Workspace.
+clear;
+close all;
+clc;
+
+
+%% Calling this script generates horizontal position and horizontal velocity 
+% using GNSS only using an Extended Kalman Filter
+%GNSS_AHMED_BACKUP;
+
+gnss_computation = GNSS_EKF_function;
+gnss_latitude = gnss_computation(:,2);
+gnss_longitude = gnss_computation(:,3);
+
+%% figures showing the latitude, longitude and velocity of the lawnmower 
+% using GNSS results with respect to time
+figure
+geoplot(gnss_latitude,gnss_longitude)
+title('A plot of the position of the lawnmower in the map')
+% figure
+
+
+%% Calling this script generates horizontal position, horizontal velocity 
+% and heading solution solution using all the other sensors apart from GNSS
+% using an Extended Kalman Filter
+DR_computation = Multisensor_EKF_function(gnss_computation);
+
+%% figures showing the latitude, longitude and velocity of the lawnmower 
+% using multisensor results with respect to time
+figure
+geoplot(latitude,longitude)
+title('A plot of the position of the lawnmower in the map')
+
+
+%% Calling this script generates horizontal position, horizontal velocity 
+% and heading solution solution by combining the data from GNSS and the
+% other sensors
+%Kennedy_integrates;
+% 
+Integration_result = Integration_function(gnss_computation,DR_computation);
+gnss_latitude = Integration_result(:,2);
+gnss_longitude = gnss_computation(:,3);
+
+%% figures showing the latitude, longitude and velocity of the lawnmower 
+% using GNSS as well as multisensor results with respect to time
+figure
+geoplot(Integration_result(:,2),Integration_result(:,3))
+title('A plot of the position of the lawnmower in the map')
+
+%Integration;
